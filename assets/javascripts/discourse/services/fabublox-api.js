@@ -14,8 +14,8 @@ export default class FabubloxApi extends Service {
   async getAuth0Token() {
     try {
       // Access the token directly from the current user's custom fields
-      if (this.currentUser && this.currentUser.custom_fields) {
-        const token = this.currentUser.custom_fields.current_access_token;
+      if (this.currentUser && this.currentUser.user_custom_fields) {
+        const token = this.currentUser.user_custom_fields.current_access_token;
         if (token) {
           return token;
         }
@@ -92,7 +92,7 @@ export default class FabubloxApi extends Service {
     try {
       // Get the Auth0 token for authentication
       const token = await this.getAuth0Token();
-      
+
       // Make a direct request to the API using the base URL
       const url = `${this.apiBaseUrl}/api/processes/${processId}`;
       const response = await ajax(url, {
@@ -103,7 +103,7 @@ export default class FabubloxApi extends Service {
           "Content-Type": "application/json"
         }
       });
-      
+
       return response;
     } catch (error) {
       this._logError(`Error fetching process ${processId}:`, error);
