@@ -1,0 +1,10 @@
+en:
+  js:
+    topic_custom_field:
+      label: "%{field}: %{value}"
+      placeholder: "Enter %{field}"
+      add_reference_process: "Add a Reference Process"
+      change_process: "Change Process"
+      select_process: "Select a Process"
+      no_processes: "You don't have any processes yet"
+      loading_processes: "Loading processes..."

@@ -1,0 +1,20 @@
+plugins:
+  topic_custom_field_enabled:
+    default: true
+    client: true
+  topic_custom_field_name:
+    default: 'price'
+    client: true
+  topic_custom_field_type:
+    default: 'string'
+    client: true
+    type: enum
+    choices:
+      - string
+      - integer
+      - boolean
+      - json
+  fabublox_api_base_url:
+    default: 'https://api.fabublox.com'
+    client: true
+    description: 'Base URL for the Fabublox API'

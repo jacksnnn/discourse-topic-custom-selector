@@ -1,0 +1,6 @@
+{{#if (and this.editingFirstPost this.canEditTitle)}}
+      <TopicCustomFieldInput
+        @fieldValue={{this.fieldValue}}
+        @onChangeField={{this.onChangeField}}
+      />
+{{/if}}

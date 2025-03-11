@@ -1,0 +1,71 @@
+
+So the urls we are adding are from our other website We are going to  implement an iframe that allows the user to pick a process from a list of their processes and additionally pull and display the SVG image assocaited with each process for the process that is picked on the topic post header
+
+1. Overview of the Solution
+Create a modal dialog that contains an iframe pointing to your process selection page
+Add a button to open this modal in the composer
+Set up communication between the iframe and Discourse using postMessage
+Store both the process URL and its associated SVG when a process is selected
+Display the SVG in the topic header
+
+This implementation:
+Uses the existing Auth0 via Oauth2.0 plugin integration in Discourse to get the user's token
+Passes the token securely to the Fabublox iframe
+Validates the token on the Fabublox side
+Only shows processes belonging to the authenticated user
+Verifies the user's identity when sending process data back to Discourse
+Security considerations:
+The Auth0 token is passed via URL parameters, which is secure in this case because:
+The communication is between your own domains
+The token is short-lived
+The token is validated on both ends
+The user's sub is verified on both sides to ensure data integrity
+CORS is properly configured to only allow communication between your domains
+The Auth0 token is validated using the proper JWKS endpoint
+This setup ensures that users can only see and select their own processes while maintaining a seamless experience between Discourse and Fabublox.
+
+
+
+a PlantUML sequence diagram showing how to handle the authentication flow between Discourse and Fabublox using Auth0.
+
+UML Diagram
+@startuml
+actor User
+participant "Discourse Plugin" as Plugin
+participant "Process Selector Modal" as Modal
+participant "Fabublox Website" as Fabublox
+participant "Auth0" as Auth0
+participant "Discourse Server" as Server
+database "Discourse DB" as DB
+
+== Authentication Flow ==
+
+User -> Plugin: Clicks "Browse Processes" button
+Plugin -> Server: Requests Auth0 token
+Server -> Auth0: Validates current session
+Auth0 --> Server: Returns user's Auth0 token
+Server --> Plugin: Returns Auth0 token
+
+Plugin -> Modal: Opens Process Selector Modal with Auth0 token
+Modal -> Fabublox: Loads iframe with Auth0 token
+Note over Modal,Fabublox: Token passed as URL parameter
+
+Fabublox -> Fabublox: Validates Auth0 token
+Fabublox -> Auth0: Verifies token
+Auth0 --> Fabublox: Confirms token validity
+Fabublox -> Fabublox: Extracts user sub from token
+Fabublox --> Modal: Displays user's processes only
+
+== Process Selection Flow ==
+
+User -> Fabublox: Selects a process
+Fabublox -> Fabublox: Prepares process data
+Fabublox --> Modal: Sends process data via postMessage
+Note over Fabublox,Modal: Data includes:<br/>- Process URL<br/>- SVG content<br/>- User sub (for verification)
+
+Modal -> Plugin: Updates composer with process data
+Plugin -> Server: Saves topic with process data
+Server -> DB: Stores process URL and SVG
+
+@enduml
+"""
