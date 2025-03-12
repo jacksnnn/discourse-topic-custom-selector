@@ -251,21 +251,42 @@ after_initialize do
     # Updated method to fetch process SVG
     def self.fetch_process_svg(process_id)
       Rails.logger.info("Fetching SVG for process ID: #{process_id}")
+      
+      if !process_id
+        Rails.logger.warn("No process ID provided to fetch_process_svg")
+        return nil
+      end
+      
       uri = URI.parse("#{api_base_url}/api/processes/#{process_id}/svg")
+      Rails.logger.info("Full URI for SVG request: #{uri}")
+      
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = uri.scheme == 'https'
+      http.open_timeout = 10
+      http.read_timeout = 20
       
       request = Net::HTTP::Get.new(uri.request_uri)
       request["Content-Type"] = "application/json"
+      request["Accept"] = "*/*"
+      request["User-Agent"] = "Discourse/FabubloxPlugin"
       
       Rails.logger.info("Sending request to: #{uri}")
-      response = http.request(request)
       
-      if response.code.to_i == 200
-        Rails.logger.info("Successfully fetched SVG, content length: #{response.body.length}")
-        response.body
-      else
-        Rails.logger.warn("Failed to fetch SVG, response code: #{response.code}")
+      begin
+        response = http.request(request)
+        
+        if response.code.to_i == 200
+          content_type = response["Content-Type"]
+          Rails.logger.info("Successfully fetched SVG, content length: #{response.body.length}, Content-Type: #{content_type}")
+          response.body
+        else
+          Rails.logger.warn("Failed to fetch SVG, response code: #{response.code}")
+          Rails.logger.warn("Response body: #{response.body[0..200]}")
+          nil
+        end
+      rescue => e
+        Rails.logger.error("Error in fetch_process_svg: #{e.class.name} - #{e.message}")
+        Rails.logger.error(e.backtrace.join("\n"))
         nil
       end
     end
@@ -328,26 +349,62 @@ after_initialize do
       Rails.logger.info("Fetching owned processes with token: #{jwt_token ? '[REDACTED]' : 'nil'}")
       
       uri = URI.parse("#{api_base_url}/api/processes/owned")
+      Rails.logger.info("Full URI for API request: #{uri}")
+      
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = uri.scheme == 'https'
+      http.open_timeout = 10  # Set timeouts to prevent hanging requests
+      http.read_timeout = 20
       
       request = Net::HTTP::Get.new(uri.request_uri)
       request["Authorization"] = "Bearer #{jwt_token}"
       request["Content-Type"] = "application/json"
+      request["Accept"] = "application/json"
+      request["User-Agent"] = "Discourse/FabubloxPlugin"
       
       Rails.logger.info("Sending GET request to: #{uri}")
       Rails.logger.info("Request headers: #{request.to_hash.inspect}")
       
       begin
+        Rails.logger.info("Starting API request to #{uri}")
         response = http.request(request)
         Rails.logger.info("Received response: code #{response.code}")
         
         if response.code.to_i == 200
-          result = JSON.parse(response.body)
-          Rails.logger.info("Successfully parsed response, found #{result.length} processes")
-          result
+          begin
+            # First log the raw response for debugging
+            response_body = response.body
+            Rails.logger.info("Response body (first 500 chars): #{response_body[0..500]}")
+            
+            # Then try to parse it
+            result = JSON.parse(response_body)
+            
+            # Check if result is an array
+            if result.is_a?(Array)
+              Rails.logger.info("Successfully parsed response as an array, found #{result.length} processes")
+              result
+            else
+              Rails.logger.warn("API returned JSON but not an array: #{result.class.name}")
+              
+              # If it's a hash, maybe it has a key containing the processes
+              if result.is_a?(Hash) && result["processes"].is_a?(Array)
+                Rails.logger.info("Found processes array inside result hash")
+                return result["processes"]
+              end
+              
+              # Return as is and let the client handle it
+              result
+            end
+          rescue JSON::ParserError => e
+            Rails.logger.error("JSON parsing error: #{e.message}")
+            Rails.logger.error("Response body that failed to parse: #{response_body}")
+            []
+          end
         else
           Rails.logger.warn("API request failed in fetch_owned_processes: #{response.code} - #{response.body[0..200]}")
+          if response.code.to_i == 401
+            Rails.logger.warn("Authentication failure - token may be invalid or expired")
+          end
           []
         end
       rescue => e
@@ -387,11 +444,29 @@ after_initialize do
     def process_svg
       process_id = params[:process_id]
       Rails.logger.info("FabubloxApiController#process_svg called for process ID: #{process_id}")
+      
+      if !process_id
+        Rails.logger.warn("No process ID provided")
+        render json: { error: "Process ID is required" }, status: 400
+        return
+      end
+      
       svg_content = FabubloxApi.fetch_process_svg(process_id)
       
       if svg_content
         Rails.logger.info("SVG content retrieved, length: #{svg_content.length}")
-        render json: svg_content, content_type: "application/json"
+        
+        # Check if it's JSON or raw SVG
+        begin
+          # Try to parse as JSON first
+          json_content = JSON.parse(svg_content)
+          # If we get here, it's valid JSON, so return it
+          render json: json_content
+        rescue JSON::ParserError
+          # Not JSON, likely raw SVG content
+          Rails.logger.info("Content is not JSON, returning as raw SVG")
+          render plain: svg_content, content_type: "image/svg+xml"
+        end
       else
         Rails.logger.warn("No SVG content found for process ID: #{process_id}")
         render json: { error: "Could not retrieve SVG content" }, status: 404
@@ -451,6 +526,9 @@ after_initialize do
         begin
           processes = FabubloxApi.fetch_owned_processes(token)
           Rails.logger.info("Processes retrieved: #{processes ? processes.length : 0}")
+          
+          # Return the processes array directly without wrapping it
+          # The JavaScript expects this to be an array, not an object
           render json: processes
         rescue => e
           Rails.logger.error("Exception in owned_processes controller: #{e.class.name} - #{e.message}")

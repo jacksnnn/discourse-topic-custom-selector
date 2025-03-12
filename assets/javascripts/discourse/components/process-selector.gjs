@@ -57,16 +57,42 @@ export default class ProcessSelector extends Component {
       console.log("[ProcessSelector] Calling fabubloxApi.fetchOwnedProcesses()");
       const processes = await this.fabubloxApi.fetchOwnedProcesses();
       console.log("[ProcessSelector] Received processes:", processes);
-      this.processes = processes;
-
-      // Load SVG previews for each process
-      console.log("[ProcessSelector] Loading SVG previews for each process");
-      for (const process of processes) {
-        console.log("[ProcessSelector] Loading SVG for process:", process.processId);
-        this.loadProcessSvg(process.processId);
+      
+      // Check if we received a valid array of processes
+      if (Array.isArray(processes)) {
+        this.processes = processes;
+        
+        // Load SVG previews for each process
+        console.log("[ProcessSelector] Loading SVG previews for each process");
+        for (const process of processes) {
+          console.log("[ProcessSelector] Loading SVG for process:", process.processId);
+          this.loadProcessSvg(process.processId);
+        }
+      } else {
+        // Handle non-array response
+        console.log("[ProcessSelector] Received non-array response:", processes);
+        // If it's an object with a specific structure, try to extract the processes
+        if (processes && processes.fabublox_api && Array.isArray(processes.fabublox_api)) {
+          console.log("[ProcessSelector] Extracted array from response");
+          this.processes = processes.fabublox_api;
+          
+          // Load SVG previews if there are any processes
+          if (this.processes.length > 0) {
+            console.log("[ProcessSelector] Loading SVG previews for extracted processes");
+            for (const process of this.processes) {
+              console.log("[ProcessSelector] Loading SVG for process:", process.processId);
+              this.loadProcessSvg(process.processId);
+            }
+          }
+        } else {
+          // If we don't know how to handle the response, set processes to an empty array
+          console.log("[ProcessSelector] Unknown response format, setting processes to empty array");
+          this.processes = [];
+        }
       }
     } catch (error) {
       console.error("[ProcessSelector] Error loading user processes:", error);
+      this.processes = []; // Ensure processes is always at least an empty array
       this.isLoading = false;
     } finally {
       console.log("[ProcessSelector] Finished loading user processes");
