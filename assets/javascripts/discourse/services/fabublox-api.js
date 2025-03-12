@@ -27,12 +27,39 @@ export default class FabubloxApi extends Service {
 
       this._logWarning("Received response from /oauth2/refresh: " + JSON.stringify(result));
 
-      if (result && result.access_token) {
+      // Extract the token value
+      let token = null;
+      
+      if (result) {
+        // Case 1: Result is already a string (the token itself)
+        if (typeof result === "string") {
+          token = result;
+          this._logWarning("Received token as string directly");
+        }
+        // Case 2: Result is an object with access_token field (standard OAuth format)
+        else if (result.access_token) {
+          token = result.access_token;
+          this._logWarning("Extracted access_token from response object");
+        }
+        // Case 3: Result is a string that looks like JSON (possibly double-encoded)
+        else if (typeof result === "string" && result.startsWith("{") && result.includes("access_token")) {
+          try {
+            const parsedResult = JSON.parse(result);
+            if (parsedResult.access_token) {
+              token = parsedResult.access_token;
+              this._logWarning("Extracted access_token from parsed JSON string");
+            }
+          } catch (e) {
+            this._logWarning("Failed to parse response as JSON: " + e.message);
+          }
+        }
+      }
+      
+      if (token) {
         this._logWarning("Successfully retrieved access token");
-        return result.access_token;
+        return token;
       } else {
-        this._logWarning("No access_token in response: " + JSON.stringify(result));
-        this._logWarning("No Auth0 token returned from the refresh endpoint");
+        this._logWarning("No access_token could be extracted from response: " + JSON.stringify(result));
         return null;
       }
     } catch (error) {

@@ -249,12 +249,27 @@ after_initialize do
     # end
     
     # Updated method to fetch process SVG
-    def self.fetch_process_svg(process_id)
+    def self.fetch_process_svg(process_id, token = nil)
       Rails.logger.info("Fetching SVG for process ID: #{process_id}")
       
       if !process_id
         Rails.logger.warn("No process ID provided to fetch_process_svg")
         return nil
+      end
+      
+      # Parse the token if provided and in JSON format
+      if token
+        begin
+          if token.start_with?('{') && token.include?('"access_token"')
+            parsed_token = JSON.parse(token)
+            if parsed_token && parsed_token["access_token"]
+              Rails.logger.info("Found token in JSON format in fetch_process_svg, extracting access_token value")
+              token = parsed_token["access_token"]
+            end
+          end
+        rescue JSON::ParserError => e
+          Rails.logger.warn("Failed to parse token as JSON in fetch_process_svg, will use as-is: #{e.message}")
+        end
       end
       
       uri = URI.parse("#{api_base_url}/api/processes/#{process_id}/svg")
@@ -269,6 +284,12 @@ after_initialize do
       request["Content-Type"] = "application/json"
       request["Accept"] = "*/*"
       request["User-Agent"] = "Discourse/FabubloxPlugin"
+      
+      # Add authorization if token provided
+      if token
+        request["Authorization"] = "Bearer #{token}"
+        Rails.logger.info("Added authorization header to SVG request")
+      end
       
       Rails.logger.info("Sending request to: #{uri}")
       
@@ -352,6 +373,25 @@ after_initialize do
         Rails.logger.error("No JWT token provided for fetch_owned_processes")
         return []
       end
+      
+      # Parse the token if it's in JSON format
+      # This handles the case where the token is stored as {"access_token":"actual_token_value"}
+      begin
+        if jwt_token.start_with?('{') && jwt_token.include?('"access_token"')
+          parsed_token = JSON.parse(jwt_token)
+          if parsed_token && parsed_token["access_token"]
+            Rails.logger.info("Found token in JSON format, extracting access_token value")
+            jwt_token = parsed_token["access_token"]
+          else
+            Rails.logger.error("Token appears to be JSON but does not contain access_token field")
+          end
+        end
+      rescue JSON::ParserError => e
+        Rails.logger.warn("Failed to parse token as JSON, will use as-is: #{e.message}")
+        # Continue with the token as-is
+      end
+      
+      Rails.logger.info("Using token format: #{jwt_token.start_with?('eyJ') ? 'starts with eyJ (looks like JWT)' : 'does not look like standard JWT'}")
       
       max_retries = 2
       retries = 0
@@ -470,6 +510,7 @@ after_initialize do
     get "/fabublox/current_user_token" => "fabublox_api#current_user_token"
     post "/fabublox/authenticated_request" => "fabublox_api#authenticated_request"
     get "/api/processes/owned" => "fabublox_api#owned_processes"
+    get "/fabublox/debug_token" => "fabublox_api#debug_token"
   end
   
   # Create a controller for the Fabublox API
@@ -525,6 +566,21 @@ after_initialize do
       raise Discourse::NotLoggedIn.new unless current_user
       
       token = current_user.custom_fields['current_access_token']
+      
+      # Try to parse the token if it's in JSON format
+      if token
+        begin
+          if token.start_with?('{') && token.include?('"access_token"')
+            parsed_token = JSON.parse(token)
+            if parsed_token && parsed_token["access_token"]
+              Rails.logger.info("Found token in JSON format, extracting access_token value")
+              token = parsed_token["access_token"]
+            end
+          end
+        rescue JSON::ParserError
+          # Continue with the token as-is
+        end
+      end
       
       if token
         render json: { success: true, token: token }
@@ -586,6 +642,58 @@ after_initialize do
         Rails.logger.warn("No token found for user #{current_user.username}")
         render json: { success: false, error: "No Auth0 token found for user" }, status: 404
       end
+    end
+
+    # Diagnostic endpoint to help debug token issues
+    def debug_token
+      raise Discourse::NotLoggedIn.new unless current_user
+      
+      raw_token = current_user.custom_fields['current_access_token']
+      
+      debug_info = {
+        raw_token_present: raw_token.present?,
+        raw_token_type: raw_token.class.name,
+        raw_token_length: raw_token ? raw_token.length : 0,
+        raw_token_preview: raw_token ? "#{raw_token[0..20]}...#{raw_token[-20..-1]}" : nil,
+        appears_to_be_json: raw_token ? (raw_token.start_with?('{') && raw_token.end_with?('}')) : false,
+        appears_to_have_access_token: raw_token ? raw_token.include?('access_token') : false
+      }
+      
+      # Try to parse the token
+      parsed_token = nil
+      
+      if raw_token && raw_token.start_with?('{')
+        begin
+          parsed_token = JSON.parse(raw_token)
+          debug_info[:parsed_successfully] = true
+          debug_info[:parsed_token_keys] = parsed_token.keys
+          
+          if parsed_token["access_token"]
+            debug_info[:extracted_token_preview] = "#{parsed_token["access_token"][0..20]}...#{parsed_token["access_token"][-20..-1]}"
+            debug_info[:extracted_token_length] = parsed_token["access_token"].length
+          end
+        rescue JSON::ParserError => e
+          debug_info[:parsed_successfully] = false
+          debug_info[:parse_error] = e.message
+        end
+      else
+        debug_info[:parsed_successfully] = false
+        debug_info[:parse_error] = "Token doesn't appear to be JSON"
+      end
+      
+      # Provide guidance
+      if debug_info[:parsed_successfully] && debug_info[:parsed_token_keys].include?("access_token")
+        debug_info[:diagnosis] = "The token is stored as a JSON object. The actual token is inside the 'access_token' field."
+        debug_info[:solution] = "Use the extract_token modifications you've added to fix this."
+      elsif raw_token && raw_token.start_with?('eyJ')
+        debug_info[:diagnosis] = "The token appears to be stored in the correct format (JWT token)."
+        debug_info[:solution] = "This is good - the token is stored correctly."
+      else
+        debug_info[:diagnosis] = "The token format is unclear. It's neither a plain JWT token nor a parseable JSON object."
+        debug_info[:solution] = "Check how the token is being generated and stored."
+      end
+      
+      render json: debug_info
     end
   end
 end
