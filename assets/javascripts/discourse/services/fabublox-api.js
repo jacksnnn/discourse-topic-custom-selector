@@ -14,7 +14,8 @@ export default class FabubloxApi extends Service {
   async getAuth0Token() {
     try {
       // Access the token directly from the current user's custom fields
-      if (this.currentUser && this.currentUser.user_custom_fields) {
+      if (this.currentUser) {
+        console.log("Current user:", this.currentUser);
         const token = this.currentUser.user_custom_fields.current_access_token;
         if (token) {
           return token;
@@ -49,64 +50,6 @@ export default class FabubloxApi extends Service {
       return result;
     } catch (error) {
       this._logError(`Error making authenticated request to ${endpoint}:`, error);
-      popupAjaxError(error);
-      return null;
-    }
-  }
-
-  // Fetch processes for the current user
-  async fetchUserProcesses() {
-    try {
-      // First try to get the user's Auth0 ID from their profile
-      if (this.currentUser) {
-        // Try to make an authenticated request to get the user's processes
-        const processes = await this.authenticatedRequest("processes/user");
-        if (processes) {
-          return processes;
-        }
-      }
-
-      // Fallback to the old method if authenticated request fails
-      const auth0Id = this.currentUser?.auth0_id;
-      if (!auth0Id) {
-        this._logWarning("No Auth0 ID found for user");
-        return [];
-      }
-
-      const response = await ajax(`/fabublox/user_processes/${encodeURIComponent(auth0Id)}`);
-      return response || [];
-    } catch (error) {
-      this._logError("Error fetching user processes:", error);
-      popupAjaxError(error);
-      return [];
-    }
-  }
-
-  // Fetch a single process by ID
-  async fetchProcessById(processId) {
-    if (!processId) {
-      this._logWarning("No process ID provided");
-      return null;
-    }
-
-    try {
-      // Get the Auth0 token for authentication
-      const token = await this.getAuth0Token();
-
-      // Make a direct request to the API using the base URL
-      const url = `${this.apiBaseUrl}/api/processes/${processId}`;
-      const response = await ajax(url, {
-        headers: token ? {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json"
-        } : {
-          "Content-Type": "application/json"
-        }
-      });
-
-      return response;
-    } catch (error) {
-      this._logError(`Error fetching process ${processId}:`, error);
       popupAjaxError(error);
       return null;
     }
