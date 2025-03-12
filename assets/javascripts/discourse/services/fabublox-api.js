@@ -94,23 +94,49 @@ export default class FabubloxApi extends Service {
       this._logWarning("Using server proxy to fetch owned processes");
 
       // OPTION 1: Use our pre-defined server endpoint
-      const response = await ajax("/api/processes/owned", {
-        type: "GET"
-      });
+      try {
+        const response = await ajax("/api/processes/owned", {
+          type: "GET",
+          timeout: 30000 // 30 second timeout
+        });
 
-      // OPTION 2 (alternative): Use the generic authenticated request proxy
-      /*
-      const response = await this.authenticatedRequest("api/processes/owned", {
-        // Additional params if needed
-      });
-      */
-
-      this._logWarning(`Received ${response ? response.length : 0} processes from proxy endpoint`);
-      return response || [];
+        this._logWarning(`Received ${response ? (Array.isArray(response) ? response.length : 'non-array') : 0} processes from proxy endpoint`);
+        
+        // If it's an empty array, log it but still return it
+        if (Array.isArray(response) && response.length === 0) {
+          this._logWarning("Server returned an empty array of processes");
+        }
+        
+        return response || [];
+      } catch (proxyError) {
+        // Enhanced error handling for the proxy endpoint
+        this._logError("Error from owned processes endpoint:", proxyError);
+        
+        // If it's a 500 error, try to extract more information
+        if (proxyError.status === 500) {
+          this._logWarning("Received 500 Internal Server Error from the API");
+          
+          // Try to parse the error response if available
+          try {
+            if (proxyError.responseJSON) {
+              this._logWarning(`Error response from API: ${JSON.stringify(proxyError.responseJSON)}`);
+            } else if (proxyError.responseText) {
+              this._logWarning(`Error response text: ${proxyError.responseText}`);
+            }
+          } catch (e) {
+            this._logWarning("Could not parse error response");
+          }
+          
+          // Return an error object instead of throwing
+          return { error: "The server encountered an internal error (500). Please try again later." };
+        }
+        
+        // For other error types
+        return { error: proxyError.message || "Error fetching processes" };
+      }
     } catch (error) {
-      this._logError("Error fetching owned processes:", error);
-      popupAjaxError(error);
-      return [];
+      this._logError("Error in fetchOwnedProcesses:", error);
+      return { error: error.message || "Unknown error occurred" };
     }
   }
 
@@ -124,15 +150,30 @@ export default class FabubloxApi extends Service {
     try {
       this._logWarning(`Using server proxy to fetch SVG for process ID: ${processId}`);
 
-      // Use our pre-defined server endpoint
-      const response = await ajax(`/fabublox/process_svg/${processId}`, {
-        type: "GET"
-      });
+      // Use our pre-defined server endpoint with timeout
+      try {
+        const response = await ajax(`/fabublox/process_svg/${processId}`, {
+          type: "GET",
+          timeout: 20000 // 20 second timeout
+        });
 
-      this._logWarning(`Received SVG data (length: ${response ? response.length : 0})`);
-      return response;
+        this._logWarning(`Received SVG data (length: ${response ? response.length : 0})`);
+        return response;
+      } catch (proxyError) {
+        // Enhanced error handling
+        this._logError(`Error from SVG proxy for process ${processId}:`, proxyError);
+        
+        // If it's a 500 error, provide more context
+        if (proxyError.status === 500) {
+          this._logWarning(`Received 500 Internal Server Error when fetching SVG for process ${processId}`);
+          return null;
+        }
+        
+        // For other errors
+        return null;
+      }
     } catch (error) {
-      this._logError(`Error fetching SVG for process ${processId}:`, error);
+      this._logError(`Error in getProcessSvgPreview for process ${processId}:`, error);
       return null;
     }
   }

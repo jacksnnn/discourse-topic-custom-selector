@@ -15,6 +15,7 @@ export default class ProcessSelector extends Component {
   @tracked isDropdownOpen = false;
   @tracked selectedProcess = null;
   @tracked selectedProcessSvg = null;
+  @tracked loadError = null;
 
   constructor() {
     super(...arguments);
@@ -53,6 +54,8 @@ export default class ProcessSelector extends Component {
   async loadUserProcesses() {
     console.log("[ProcessSelector] Loading user processes");
     this.isLoading = true;
+    this.loadError = null; // Clear any previous error
+    
     try {
       console.log("[ProcessSelector] Calling fabubloxApi.fetchOwnedProcesses()");
       const processes = await this.fabubloxApi.fetchOwnedProcesses();
@@ -60,17 +63,26 @@ export default class ProcessSelector extends Component {
       
       // Check if we received a valid array of processes
       if (Array.isArray(processes)) {
+        if (processes.length === 0) {
+          console.log("[ProcessSelector] Received empty array of processes");
+          this.loadError = "No processes found. The server returned an empty list.";
+        }
         this.processes = processes;
         
         // Load SVG previews for each process
         console.log("[ProcessSelector] Loading SVG previews for each process");
         for (const process of processes) {
+          if (!process.processId) {
+            console.warn("[ProcessSelector] Process missing processId:", process);
+            continue;
+          }
           console.log("[ProcessSelector] Loading SVG for process:", process.processId);
           this.loadProcessSvg(process.processId);
         }
       } else {
         // Handle non-array response
         console.log("[ProcessSelector] Received non-array response:", processes);
+        
         // If it's an object with a specific structure, try to extract the processes
         if (processes && processes.fabublox_api && Array.isArray(processes.fabublox_api)) {
           console.log("[ProcessSelector] Extracted array from response");
@@ -80,20 +92,38 @@ export default class ProcessSelector extends Component {
           if (this.processes.length > 0) {
             console.log("[ProcessSelector] Loading SVG previews for extracted processes");
             for (const process of this.processes) {
+              if (!process.processId) {
+                console.warn("[ProcessSelector] Process missing processId:", process);
+                continue;
+              }
               console.log("[ProcessSelector] Loading SVG for process:", process.processId);
               this.loadProcessSvg(process.processId);
             }
+          } else {
+            console.log("[ProcessSelector] Extracted array is empty");
+            this.loadError = "No processes found. The server returned an empty list.";
           }
+        } else if (processes === null || processes === undefined) {
+          // Handle null/undefined response (likely from a server error)
+          console.error("[ProcessSelector] Server returned null or undefined");
+          this.loadError = "Could not fetch processes. The server returned an error.";
+          this.processes = [];
+        } else if (typeof processes === 'object' && processes.error) {
+          // Handle error object
+          console.error("[ProcessSelector] Server returned error:", processes.error);
+          this.loadError = `Error: ${processes.error}`;
+          this.processes = [];
         } else {
           // If we don't know how to handle the response, set processes to an empty array
           console.log("[ProcessSelector] Unknown response format, setting processes to empty array");
+          this.loadError = "Unexpected response format from the server.";
           this.processes = [];
         }
       }
     } catch (error) {
       console.error("[ProcessSelector] Error loading user processes:", error);
+      this.loadError = `Error: ${error.message || "Unknown error occurred"}`;
       this.processes = []; // Ensure processes is always at least an empty array
-      this.isLoading = false;
     } finally {
       console.log("[ProcessSelector] Finished loading user processes");
       this.isLoading = false;
@@ -226,7 +256,7 @@ export default class ProcessSelector extends Component {
                 {{/each}}
               {{else}}
                 <div class="no-processes">
-                  No processes found
+                  {{this.loadError}}
                 </div>
               {{/if}}
             </div>

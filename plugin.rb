@@ -344,74 +344,121 @@ after_initialize do
       end
     end
     
-    # New method to fetch owned processes using the user's access token
+    # Enhanced method to fetch owned processes with retry logic
     def self.fetch_owned_processes(jwt_token)
       Rails.logger.info("Fetching owned processes with token: #{jwt_token ? '[REDACTED]' : 'nil'}")
       
-      uri = URI.parse("#{api_base_url}/api/processes/owned")
-      Rails.logger.info("Full URI for API request: #{uri}")
-      
-      http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = uri.scheme == 'https'
-      http.open_timeout = 10  # Set timeouts to prevent hanging requests
-      http.read_timeout = 20
-      
-      request = Net::HTTP::Get.new(uri.request_uri)
-      request["Authorization"] = "Bearer #{jwt_token}"
-      request["Content-Type"] = "application/json"
-      request["Accept"] = "application/json"
-      request["User-Agent"] = "Discourse/FabubloxPlugin"
-      
-      Rails.logger.info("Sending GET request to: #{uri}")
-      Rails.logger.info("Request headers: #{request.to_hash.inspect}")
-      
-      begin
-        Rails.logger.info("Starting API request to #{uri}")
-        response = http.request(request)
-        Rails.logger.info("Received response: code #{response.code}")
-        
-        if response.code.to_i == 200
-          begin
-            # First log the raw response for debugging
-            response_body = response.body
-            Rails.logger.info("Response body (first 500 chars): #{response_body[0..500]}")
-            
-            # Then try to parse it
-            result = JSON.parse(response_body)
-            
-            # Check if result is an array
-            if result.is_a?(Array)
-              Rails.logger.info("Successfully parsed response as an array, found #{result.length} processes")
-              result
-            else
-              Rails.logger.warn("API returned JSON but not an array: #{result.class.name}")
-              
-              # If it's a hash, maybe it has a key containing the processes
-              if result.is_a?(Hash) && result["processes"].is_a?(Array)
-                Rails.logger.info("Found processes array inside result hash")
-                return result["processes"]
-              end
-              
-              # Return as is and let the client handle it
-              result
-            end
-          rescue JSON::ParserError => e
-            Rails.logger.error("JSON parsing error: #{e.message}")
-            Rails.logger.error("Response body that failed to parse: #{response_body}")
-            []
-          end
-        else
-          Rails.logger.warn("API request failed in fetch_owned_processes: #{response.code} - #{response.body[0..200]}")
-          if response.code.to_i == 401
-            Rails.logger.warn("Authentication failure - token may be invalid or expired")
-          end
-          []
-        end
-      rescue => e
-        Rails.logger.error("Exception in fetch_owned_processes: #{e.class.name} - #{e.message}")
-        Rails.logger.error(e.backtrace.join("\n"))
-        []
+      if !jwt_token || jwt_token.strip.empty?
+        Rails.logger.error("No JWT token provided for fetch_owned_processes")
+        return []
       end
+      
+      max_retries = 2
+      retries = 0
+      
+      while retries <= max_retries
+        begin
+          uri = URI.parse("#{api_base_url}/api/processes/owned")
+          Rails.logger.info("Full URI for API request: #{uri}")
+          
+          http = Net::HTTP.new(uri.host, uri.port)
+          http.use_ssl = uri.scheme == 'https'
+          http.open_timeout = 15  # Increased timeout
+          http.read_timeout = 30
+          
+          request = Net::HTTP::Get.new(uri.request_uri)
+          request["Authorization"] = "Bearer #{jwt_token}"
+          request["Content-Type"] = "application/json"
+          request["Accept"] = "application/json"
+          request["User-Agent"] = "Discourse/FabubloxPlugin"
+          
+          # Log a sanitized version of the token for debugging
+          token_preview = jwt_token ? "#{jwt_token[0..10]}...#{jwt_token[-10..-1]}" : "nil"
+          Rails.logger.info("Using token (preview): #{token_preview}")
+          Rails.logger.info("Sending GET request to: #{uri}, attempt #{retries + 1} of #{max_retries + 1}")
+          
+          response = http.request(request)
+          Rails.logger.info("Received response: code #{response.code}")
+          
+          # Log the full response for debugging (limit to first 1000 chars to avoid overflowing logs)
+          Rails.logger.info("Response headers: #{response.to_hash.inspect}")
+          Rails.logger.info("Response body (truncated): #{response.body ? response.body[0..1000] : 'nil'}")
+          
+          case response.code.to_i
+          when 200
+            begin
+              result = JSON.parse(response.body)
+              Rails.logger.info("Successfully parsed JSON response")
+              
+              # Return the processes based on the response structure
+              if result.is_a?(Array)
+                Rails.logger.info("Response is an array with #{result.length} processes")
+                return result
+              elsif result.is_a?(Hash)
+                if result["processes"].is_a?(Array)
+                  Rails.logger.info("Found processes array inside result hash with #{result["processes"].length} processes")
+                  return result["processes"]
+                elsif result["data"].is_a?(Array)
+                  Rails.logger.info("Found data array inside result hash with #{result["data"].length} processes")
+                  return result["data"]
+                elsif result["items"].is_a?(Array)
+                  Rails.logger.info("Found items array inside result hash with #{result["items"].length} processes")
+                  return result["items"]
+                else
+                  Rails.logger.warn("Response is a hash but doesn't contain expected process arrays. Keys: #{result.keys.join(', ')}")
+                  return []
+                end
+              else
+                Rails.logger.warn("Unexpected response type: #{result.class.name}")
+                return []
+              end
+            rescue JSON::ParserError => e
+              Rails.logger.error("JSON parsing error: #{e.message}")
+              Rails.logger.error("Response that failed to parse: #{response.body ? response.body[0..500] : 'nil'}")
+              return []
+            end
+          when 401, 403
+            Rails.logger.error("Authentication error: #{response.code} - Token may be invalid or expired")
+            return []
+          when 500..599
+            Rails.logger.error("Server error #{response.code}: #{response.body ? response.body[0..500] : 'nil'}")
+            
+            # Increment retry counter for server errors
+            if retries < max_retries
+              retries += 1
+              Rails.logger.info("Will retry request (#{retries}/#{max_retries})...")
+              sleep(1 * retries) # Exponential backoff
+              break # Exit the current begin-rescue but stay in the while loop
+            else
+              Rails.logger.error("Max retries reached. Giving up.")
+              return []
+            end
+          else
+            Rails.logger.error("Unexpected response code: #{response.code}")
+            return []
+          end
+          
+          # If we reach here without breaking or returning, we succeeded
+          break
+          
+        rescue => e
+          Rails.logger.error("Exception in fetch_owned_processes: #{e.class.name} - #{e.message}")
+          Rails.logger.error(e.backtrace.join("\n"))
+          
+          # Increment retry counter for exceptions
+          if retries < max_retries
+            retries += 1
+            Rails.logger.info("Will retry after error (#{retries}/#{max_retries})...")
+            sleep(1 * retries)
+          else
+            Rails.logger.error("Max retries reached after error. Giving up.")
+            return []
+          end
+        end
+      end
+      
+      # If we've reached here without returning, return an empty array
+      []
     end
   end
   
