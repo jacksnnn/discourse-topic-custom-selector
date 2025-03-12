@@ -186,6 +186,124 @@ after_initialize do
     object.custom_fields["auth0_id"]
   end
   
+  # Hook into Auth0 OAuth token processing
+  DiscoursePluginRegistry.register_auth_provider_specializer(:oauth2_basic, 'auth0') do |auth|
+    Rails.logger.info("Auth0 token specializer called")
+    
+    if auth && auth[:credentials] && auth[:credentials][:token]
+      token = auth[:credentials][:token]
+      
+      # Check if token looks like JSON and extract the actual token
+      begin
+        if token.is_a?(String) && token.start_with?('{') && token.include?('"access_token"')
+          Rails.logger.info("Detected JSON token format, extracting access_token")
+          parsed_token = JSON.parse(token)
+          if parsed_token && parsed_token["access_token"]
+            Rails.logger.info("Successfully extracted access_token from JSON")
+            
+            # Replace the original token with the extracted token
+            auth[:credentials][:token] = parsed_token["access_token"]
+            Rails.logger.info("Replaced token in auth hash")
+          end
+        end
+      rescue JSON::ParserError => e
+        Rails.logger.warn("Auth0 token specializer error: #{e.message}")
+      end
+    end
+    
+    auth
+  end
+  
+  # Hook to store and normalize access token from user info
+  on(:oauth2_basic_user_info) do |user_info|
+    Rails.logger.info("OAuth2 user_info hook called")
+    
+    if user_info && user_info[:extra] && user_info[:extra][:raw_info] && user_info[:extra][:raw_info][:sub]
+      Rails.logger.info("Setting auth0_id: #{user_info[:extra][:raw_info][:sub]}")
+    end
+  end
+  
+  # Hook to clean up access token format when it's saved for new users
+  on(:oauth2_user_created) do |user, auth|
+    Rails.logger.info("OAuth2 user created hook called")
+    
+    if auth && auth[:credentials] && auth[:credentials][:token]
+      Rails.logger.info("Cleaning up access token format for new user")
+      
+      token = auth[:credentials][:token]
+      
+      # Parse the token if it's in JSON format
+      begin
+        if token.is_a?(String) && token.start_with?('{') && token.include?('"access_token"')
+          parsed_token = JSON.parse(token)
+          if parsed_token && parsed_token["access_token"]
+            Rails.logger.info("Found token in JSON format during user creation, extracting access_token value")
+            token = parsed_token["access_token"]
+            
+            # Save the cleaned token
+            if user
+              user.custom_fields['current_access_token'] = token
+              user.save_custom_fields
+              Rails.logger.info("Saved cleaned access token to new user's custom fields")
+            end
+          end
+        end
+      rescue JSON::ParserError => e
+        Rails.logger.warn("Failed to parse token as JSON during user creation: #{e.message}")
+      end
+      
+      # Regardless of the token format, always store the clean token
+      if user && token
+        user.custom_fields['current_access_token'] = token
+        user.save_custom_fields
+        Rails.logger.info("Saved access token for new user")
+      end
+    end
+  end
+  
+  # Hook to clean up access token format for existing users
+  on(:oauth2_user_found) do |user, auth|
+    Rails.logger.info("OAuth2 user found hook called")
+    
+    if auth && auth[:credentials] && auth[:credentials][:token]
+      Rails.logger.info("Cleaning up access token format for existing user")
+      
+      token = auth[:credentials][:token]
+      
+      # Parse the token if it's in JSON format
+      begin
+        if token.is_a?(String) && token.start_with?('{') && token.include?('"access_token"')
+          parsed_token = JSON.parse(token)
+          if parsed_token && parsed_token["access_token"]
+            Rails.logger.info("Found token in JSON format for existing user, extracting access_token value")
+            token = parsed_token["access_token"]
+            
+            # Save the cleaned token
+            if user
+              user.custom_fields['current_access_token'] = token
+              user.save_custom_fields
+              Rails.logger.info("Saved cleaned access token to existing user's custom fields")
+            end
+          end
+        end
+      rescue JSON::ParserError => e
+        Rails.logger.warn("Failed to parse token as JSON for existing user: #{e.message}")
+      end
+      
+      # Regardless of the token format, always store the clean token
+      if user && token
+        current_token = user.custom_fields['current_access_token']
+        
+        # Only update if the token differs or is in a different format
+        if current_token.nil? || current_token != token
+          user.custom_fields['current_access_token'] = token
+          user.save_custom_fields
+          Rails.logger.info("Updated access token for existing user")
+        end
+      end
+    end
+  end
+  
   # Add API endpoints for Fabublox integration
   require 'net/http'
   require 'uri'
