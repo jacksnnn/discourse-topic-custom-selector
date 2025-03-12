@@ -13,18 +13,19 @@ export default class FabubloxApi extends Service {
   // Get the Auth0 token for the current user
   async getAuth0Token() {
     try {
-      // Access the token directly from the current user's custom fields
-      if (this.currentUser) {
-        console.log("Current user:", this.currentUser);
-        const token = this.currentUser.user_custom_fields.current_access_token;
-        if (token) {
-          return token;
-        }
+      // Instead of reading from the custom field, request a fresh token from the refresh endpoint.
+      const result = await ajax("/oauth2/refresh", { type: "GET" });
+      if (result && result.access_token) {
+        console.log("Result:", result);
+        console.log("Auth0 token:", result.access_token);
+        return result.access_token;
+      } else {
+        console.log("Result:", result);
+        this._logWarning("No Auth0 token returned from the refresh endpoint");
+        return null;
       }
-      this._logWarning("No Auth0 token found in user custom fields");
-      return null;
     } catch (error) {
-      this._logError("Error fetching Auth0 token:", error);
+      this._logError("Error fetching Auth0 token from refresh endpoint:", error);
       return null;
     }
   }
