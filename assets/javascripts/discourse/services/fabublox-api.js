@@ -91,14 +91,21 @@ export default class FabubloxApi extends Service {
         return [];
       }
 
-      // Make a direct request to the API using the base URL
-      const url = `${this.apiBaseUrl}/api/processes/owned`;
-      const response = await ajax(url, {
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json"
-        }
+      this._logWarning("Using server proxy to fetch owned processes");
+
+      // OPTION 1: Use our pre-defined server endpoint
+      const response = await ajax("/api/processes/owned", {
+        type: "GET"
       });
+
+      // OPTION 2 (alternative): Use the generic authenticated request proxy
+      /*
+      const response = await this.authenticatedRequest("api/processes/owned", {
+        // Additional params if needed
+      });
+      */
+
+      this._logWarning(`Received ${response ? response.length : 0} processes from proxy endpoint`);
       return response || [];
     } catch (error) {
       this._logError("Error fetching owned processes:", error);
@@ -115,20 +122,14 @@ export default class FabubloxApi extends Service {
     }
 
     try {
-      // Get the Auth0 token for authentication
-      const token = await this.getAuth0Token();
+      this._logWarning(`Using server proxy to fetch SVG for process ID: ${processId}`);
 
-      // Make a direct request to the API using the base URL
-      const url = `${this.apiBaseUrl}/api/processes/${processId}/svg`;
-      const response = await ajax(url, {
-        headers: token ? {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json"
-        } : {
-          "Content-Type": "application/json"
-        }
+      // Use our pre-defined server endpoint
+      const response = await ajax(`/fabublox/process_svg/${processId}`, {
+        type: "GET"
       });
 
+      this._logWarning(`Received SVG data (length: ${response ? response.length : 0})`);
       return response;
     } catch (error) {
       this._logError(`Error fetching SVG for process ${processId}:`, error);

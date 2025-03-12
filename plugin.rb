@@ -248,24 +248,29 @@ after_initialize do
     #   end
     # end
     
-    # def self.fetch_process_svg(process_id)
-    #   uri = URI.parse("#{api_base_url}/api/processes/#{process_id}/svg")
-    #   http = Net::HTTP.new(uri.host, uri.port)
-    #   http.use_ssl = uri.scheme == 'https'
+    # Updated method to fetch process SVG
+    def self.fetch_process_svg(process_id)
+      Rails.logger.info("Fetching SVG for process ID: #{process_id}")
+      uri = URI.parse("#{api_base_url}/api/processes/#{process_id}/svg")
+      http = Net::HTTP.new(uri.host, uri.port)
+      http.use_ssl = uri.scheme == 'https'
       
-    #   request = Net::HTTP::Get.new(uri.request_uri)
-    #   request["Content-Type"] = "application/json"
+      request = Net::HTTP::Get.new(uri.request_uri)
+      request["Content-Type"] = "application/json"
       
-    #   response = http.request(request)
+      Rails.logger.info("Sending request to: #{uri}")
+      response = http.request(request)
       
-    #   if response.code.to_i == 200
-    #     response.body
-    #   else
-    #     nil
-    #   end
-    # end
+      if response.code.to_i == 200
+        Rails.logger.info("Successfully fetched SVG, content length: #{response.body.length}")
+        response.body
+      else
+        Rails.logger.warn("Failed to fetch SVG, response code: #{response.code}")
+        nil
+      end
+    end
     
-    # New method to fetch data with Auth0 token
+    # Method to fetch data with Auth0 token
     def self.fetch_with_auth_token(endpoint, token = nil, params = {})
       Rails.logger.info("Fetching with auth token: #{endpoint}")
       
@@ -282,7 +287,7 @@ after_initialize do
       # Add Auth0 token if available
       if token
         request["Authorization"] = "Bearer #{token}"
-        Rails.logger.info("Added Authorization header with token: Bearer #{token}")
+        Rails.logger.info("Added Authorization header with token: Bearer [REDACTED]")
       else
         Rails.logger.warn("No token provided for authenticated request")
       end
@@ -302,12 +307,14 @@ after_initialize do
       begin
         response = http.request(request)
         
-        Rails.logger.info("Received response: code #{response.code} with body: #{response.body}")
+        Rails.logger.info("Received response: code #{response.code}")
         
         if response.code.to_i == 200
-          JSON.parse(response.body)
+          result = JSON.parse(response.body)
+          Rails.logger.info("Successfully parsed response, body length: #{response.body.length}")
+          result
         else
-          Rails.logger.warn("API request failed: #{response.code} - #{response.body}")
+          Rails.logger.warn("API request failed: #{response.code} - #{response.body[0..200]}")
           nil
         end
       rescue => e
@@ -318,6 +325,8 @@ after_initialize do
     
     # New method to fetch owned processes using the user's access token
     def self.fetch_owned_processes(jwt_token)
+      Rails.logger.info("Fetching owned processes with token: #{jwt_token ? '[REDACTED]' : 'nil'}")
+      
       uri = URI.parse("#{api_base_url}/api/processes/owned")
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = uri.scheme == 'https'
@@ -329,13 +338,21 @@ after_initialize do
       Rails.logger.info("Sending GET request to: #{uri}")
       Rails.logger.info("Request headers: #{request.to_hash.inspect}")
       
-      response = http.request(request)
-      Rails.logger.info("Received response: code #{response.code} with body: #{response.body}")
-      
-      if response.code.to_i == 200
-        JSON.parse(response.body)
-      else
-        Rails.logger.warn("API request failed in fetch_owned_processes: #{response.code} - #{response.body}")
+      begin
+        response = http.request(request)
+        Rails.logger.info("Received response: code #{response.code}")
+        
+        if response.code.to_i == 200
+          result = JSON.parse(response.body)
+          Rails.logger.info("Successfully parsed response, found #{result.length} processes")
+          result
+        else
+          Rails.logger.warn("API request failed in fetch_owned_processes: #{response.code} - #{response.body[0..200]}")
+          []
+        end
+      rescue => e
+        Rails.logger.error("Exception in fetch_owned_processes: #{e.class.name} - #{e.message}")
+        Rails.logger.error(e.backtrace.join("\n"))
         []
       end
     end
@@ -369,7 +386,16 @@ after_initialize do
     
     def process_svg
       process_id = params[:process_id]
-      render json: FabubloxApi.fetch_process_svg(process_id)
+      Rails.logger.info("FabubloxApiController#process_svg called for process ID: #{process_id}")
+      svg_content = FabubloxApi.fetch_process_svg(process_id)
+      
+      if svg_content
+        Rails.logger.info("SVG content retrieved, length: #{svg_content.length}")
+        render json: svg_content, content_type: "application/json"
+      else
+        Rails.logger.warn("No SVG content found for process ID: #{process_id}")
+        render json: { error: "Could not retrieve SVG content" }, status: 404
+      end
     end
     
     # New endpoint to get the current user's Auth0 token
@@ -410,15 +436,29 @@ after_initialize do
 
     # New endpoint to fetch processes owned by the user
     def owned_processes
-      raise Discourse::NotLoggedIn.new unless current_user
+      Rails.logger.info("FabubloxApiController#owned_processes called")
       
+      # Ensure user is logged in
+      raise Discourse::NotLoggedIn.new unless current_user
+      Rails.logger.info("User is logged in: #{current_user.username}")
+      
+      # Get the token from user custom fields
       token = current_user.custom_fields['current_access_token']
+      Rails.logger.info("Token exists: #{token.present?}")
       
       if token
-        processes = FabubloxApi.fetch_owned_processes(token)
-        Rails.logger.info("Sent Token: #{token}")
-        render json: processes
+        # Call the API method to fetch processes
+        begin
+          processes = FabubloxApi.fetch_owned_processes(token)
+          Rails.logger.info("Processes retrieved: #{processes ? processes.length : 0}")
+          render json: processes
+        rescue => e
+          Rails.logger.error("Exception in owned_processes controller: #{e.class.name} - #{e.message}")
+          Rails.logger.error(e.backtrace.join("\n"))
+          render json: { error: e.message }, status: 500
+        end
       else
+        Rails.logger.warn("No token found for user #{current_user.username}")
         render json: { success: false, error: "No Auth0 token found for user" }, status: 404
       end
     end
